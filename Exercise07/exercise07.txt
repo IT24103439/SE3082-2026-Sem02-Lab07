@@ -1,0 +1,41 @@
+Exercise 7: Comparative Analysis and Performance Evaluation - IT24103439
+
+1. Structural Comparison of the Programs
+- sum_bcast: Uses MPI_Bcast. The entire 1,000,000 integer array (about 4 MB) is allocated on both Master and Worker nodes. The root has to manually loop through and sum the results received from the processes, and the final answer is only on Rank 0.
+- sum_scatter: Uses MPI_Scatter. Only the Master allocates the full array, while Worker ranks only allocate their local chunk (N/P). Rank 0 still uses a manual loop to add up the incoming values, and the final sum is only available on Rank 0.
+- sum_gather: Uses MPI_Scatter to distribute chunks and MPI_Gather to collect partial sums into an array on Rank 0. Rank 0 loops through this array to compute the grand total, so the result is only on Rank 0.
+- sum_reduce: Uses MPI_Scatter and MPI_Reduce. Memory is only allocated for chunks on the workers. There is no manual loop on root because the MPI reduction kernel handles the addition directly. The final sum is stored on Rank 0.
+- sum_allreduce: Uses MPI_Scatter and MPI_Allreduce. Similar to reduce, there is no manual loop on root. The key difference is that every single rank across both the Master and Worker nodes ends up with the final total sum.
+- sum_scan: Uses MPI_Scatter and MPI_Scan. There is no manual loop on root. It computes a prefix sum across ranks, meaning each rank gets a different cumulative value. Rank P-1 on the Worker node holds the final global sum.
+
+2. Execution Times and Performance Analysis
+On the AWS EC2 cluster (Master: 172.31.29.111, Worker: 172.31.18.219), the times were:
+- sum_bcast: 0.003356 sec (np=2), 0.030895 sec (np=4), 0.039061 sec (np=8)
+- sum_scatter: 0.003853 sec (np=2), 0.022023 sec (np=4), 0.013610 sec (np=8)
+- sum_gather: 0.003886 sec (np=2), 0.021510 sec (np=4), 0.013376 sec (np=8)
+- sum_reduce: 0.003759 sec (np=2), 0.027539 sec (np=4), 0.017977 sec (np=8)
+- sum_allreduce: 0.003800 sec (np=2), 0.021441 sec (np=4), 0.016532 sec (np=8)
+- sum_scan: 0.007292 sec (np=2), 0.031825 sec (np=4), 0.033603 sec (np=8)
+
+On local WSL, the times were:
+- sum_bcast: 0.008382 sec (np=2), 0.026158 sec (np=4), 0.014725 sec (np=8)
+- sum_scatter: 0.006673 sec (np=2), 0.003595 sec (np=4), 0.003837 sec (np=8)
+- sum_gather: 0.006889 sec (np=2), 0.005122 sec (np=4), 0.004124 sec (np=8)
+- sum_reduce: 0.006770 sec (np=2), 0.006842 sec (np=4), 0.003620 sec (np=8)
+- sum_allreduce: 0.006709 sec (np=2), 0.005559 sec (np=4), 0.002821 sec (np=8)
+- sum_scan: 0.025359 sec (np=2), 0.017404 sec (np=4), 0.015555 sec (np=8)
+
+Fastest approach and explanation:
+Fastest approach: MPI_Reduce (Exercise 4) is the fastest design theoretically, though in measured times sum_allreduce was fastest locally at np=8 (0.002821 s) and sum_bcast on EC2 at np=2 (0.003356 s).
+
+Why: MPI_Reduce minimizes data transfer by sending non-overlapping slices once and combining local totals into a single 8-byte scalar on root via an internal tree reduction, avoiding redundant array broadcasts and manual summation loops. In tiny workloads (N=1,000,000), microsecond variations in system noise, shared-memory caching, and OpenMPI heuristics cause primitives like Allreduce or Bcast to occasionally clock slightly faster.
+
+
+3. Thinking Question
+In what situation would you choose MPI_Scan over MPI_Allreduce? Give a concrete example.
+
+When to choose: When each process requires a cumulative running prefix to determine its own relative position, range, or offset, rather than just the single global total.
+
+Example: Parallel file writing with variable outputs. If Rank 0 generates 100 rows, Rank 1 generates 250 rows and Rank 2 generates 150 rows, MPI_Allreduce only provides the global sum (500 rows). MPI_Scan gives cumulative counts (100, 350, 500), allowing each rank to calculate its exact non-overlapping write offset in a shared file (Rank 0 starts at 0, Rank 1 at 100, Rank 2 at 350) so they can write concurrently without file corruption.
+
+
